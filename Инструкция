@@ -1,0 +1,94 @@
+ШАГ 1: Создаем директорию, копируем туда бинарь sh со всеми зависимостями
+root@HOST3:/tmp# mkdir malutka
+root@HOST3:/tmp# which sh
+/usr/bin/sh
+root@HOST3:/tmp# cp --parents /usr/bin/sh /tmp/malutka/
+root@HOST3:/tmp# tree ./malutka/
+root@HOST3:/tmp# tree malutka/
+malutka/
+└── usr
+    └── bin
+        └── sh
+root@HOST3:/tmp# chroot ./malutka/ sh
+chroot: failed to run command ‘sh’: No such file or directory ### ошибка возникает из-за отсуствия библиотек, от которых зависит sh
+root@HOST3:/tmp# ldd /usr/bin/sh ### смотрим список зависимостей (ldd - list dynamic dependencies) 
+	linux-vdso.so.1 (0x00007fffee56a000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007ced39c00000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007ced39e8f000)
+root@HOST3:/tmp# tar ch /lib/x86_64-linux-gnu/libc.so.6 /lib64/ld-linux-x86-64.so.2 | tar x -C malutka/ (копируем через tar)
+tar: Removing leading `/' from member names
+tar: Removing leading `/' from hard link targets
+root@HOST3:/tmp# tree malutka/
+malutka/
+├── lib
+│   └── x86_64-linux-gnu
+│       └── libc.so.6
+├── lib64
+│   └── ld-linux-x86-64.so.2
+└── usr
+    └── bin
+        └── sh
+
+6 directories, 3 files
+
+ШАГ 2: Создаем протоконтейнер. Для начала изолируем наше дерево каталогов при помощи chroot
+
+root@HOST3:/tmp# chroot ./malutka/ sh
+# cd ..
+# ls
+sh: 2: ls: not found ### Видим, что в нашем протоконтейнере нет почти никаких команд. Для устранения этого недостатка создадим директорию malutka/bin и скачаем туда busybox
+# pwd
+/
+# 
+
+root@HOST3:/tmp/malutka# mkdir bin
+root@HOST3:/tmp/malutka/bin# wget https://busybox.net/downloads/binaries/1.35.0-i686-linux-musl/busybox
+root@HOST3:/tmp/malutka/bin# ls
+busybox
+root@HOST3:/tmp/malutka/bin# chmod +x busybox 
+Запускаем chroot:
+root@HOST3:/tmp/malutka/bin# chroot /tmp/malutka/ busybox sh
+/ # ls
+sh: ls: not found ### Видим, что краткое имя утилит не работает
+/ # /bin/busybox ls
+bin    lib    lib64  usr
+
+Так же стоит обратить внимание на то, как процесс chroot находит бинарь:
+root@HOST3:/tmp/malutka/bin# chroot /tmp/malutka/ /bin/busybox sh
+То есть при запуске chroot файловый корень для текущего процесса переносится в /tmp/malutka и изнутри теперь виден как /. А дальше путь до бинаря относительно новой корневой системы каталогов будет /bin/busybox
+/ # echo $PATH
+/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin ### Видим, что процесс для запуска бинаря использует переменную PATH относительно нового корня дерева каталогов. 
+Устанавливаем символьные ссылки:
+/ # /bin/busybox --install -s
+/ # ls
+bin      lib      lib64    linuxrc  usr
+
+
+
+ШАГ 3:  Увеличиваем функционал протоконтейнера
+Заметим, что в нашем протоконтейнере нет возможности наблюдать процессы:
+/ # ps
+PID   USER     TIME  COMMAND
+ps: can't open '/proc': No such file or directory
+Исправим это
+/ # mkdir /proc
+/ # mount -t proc none /proc
+/ # ps
+Мы видим все хостовые процессы, а не только процессы нашего прото-контейнера, потому что chroot изолирует только дерево каталогов, но не изолирует процессы или сеть.
+
+Для создания контейнеров исползуются системные вызовы clone() и unshare(). Мы будем использовать одноименную утилиту unshare для нарезки неймспейсов под наш протоконтейнер
+root@HOST3:/tmp/malutka/bin# unshare -mnp -f -R /tmp/malutka --mount-proc busybox sh ### параметры m = mount-namespace, n = network namespace, p = pid namespace, R = делает chroot на указанную директорию, f = fork создает дочерний процесс от нашей консоли уже в новом PID-namespace.
+Без указания ключа f новый PID-namespace попробует примениться к текущему процессу консоли, что может вызвать конфликт.
+/ # ps
+PID   USER     TIME  COMMAND
+    1 0         0:00 busybox sh
+    2 0         0:00 ps
+
+Почему нужно создавать отдельный mount-namespace? Почему нельзя ограничиться chroot?
+Ответ: chroot меняет только корень файловой системы процесса и не изолирует дальнейшие точки монтирования. Я создал директорию /tmp/bol, в ней директории /proc, /proc1, /proc2
+С двух терминалов сделал chroot в директорию /tmp/bol и по отдельности в каждом терминале ( то есть в двух разных процессах) смотнировал /proc, /proc1 в 1ом терминале  и /proc2 во втором. При этом все точик монтирования были доступны в двух этих процессах,
+то есть не было изоляции по файловой системе.
+
+
+
+
