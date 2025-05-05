@@ -159,9 +159,35 @@ root@HOST3:/tmp/debian-container# debootstrap --variant=minbase --include iprout
 --variant=minbase - вариант установки, при котором разворачивается минимальный базовый набор пакетов, без дополнительных рекомендуемых и стандартных пакетов. Это даёт лёгкую, минимальную систему, на которой можно строить дальше.
 --include iproute2 - дополнительно к базовому набору будет установлен пакет iproute2 (утилиты для управления сетью), который по умолчанию в minbase не включён.
 jammy - кодовое имя релиза Ubuntu 22.04 LTS, то есть именно этот дистрибутив и версию будет развернуто.
-rootfs - каталог, в который будет установлена минимальная система.
+rootfs - каталог, в который будет установлена минимальная система, он будет создан в текущем каталоге, в котором запускаем утилиту debootstrap:
+root@HOST3:/tmp/debian-container# ls -lah
+total 16K
+drwxr-xr-x  3 root root 4.0K May  5 17:19 .
+drwxrwxrwt 24 root root 4.0K May  5 17:13 ..
+-rw-r--r--  1 root root 2.5K May  5 17:19 config.json
+drwxr-xr-x 17 root root 4.0K May  5 17:10 rootfs
+root@HOST3:/tmp/debian-container# cd rootfs/
+root@HOST3:/tmp/debian-container/rootfs# ls
+bin  boot  dev  etc  home  lib  lib64  media  mnt  opt  proc  root  run  sbin  srv  sys  tmp  usr  var
 
 
+
+Это заменя busybox - наша новая начинка контейнера.
+Параметры моего текущего процесса терминала:
+root@HOST3:/tmp/debian-container# ps o pid,netns,mntns,pidns $$
+    PID      NETNS      MNTNS      PIDNS
+   7440 4026531840 4026531841 4026531836
+
+Создаем контейнер:
+поменял ключ hostname в config.json
+По умолчанию в спецификации указан sh как процесс, который будет запущен внутри контейнера. 
+root@HOST3:/tmp/debian-container# runc run my-deb-container
+# hostname
+my-debian-container
+# ps o pid,netns,mntns,pidns $$
+    PID      NETNS      MNTNS      PIDNS
+      1 4026532638 4026532633 4026532636
+Как видим, атрибуты моего процесса в контейнере изменись
 
 
 
